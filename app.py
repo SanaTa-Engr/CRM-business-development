@@ -128,13 +128,202 @@ def crm_context():
 
 db_init(); seed()
 
+def validate_columns(df_in, required, label):
+    missing = [c for c in required if c not in df_in.columns]
+    if missing:
+        return False, f"{label} CSV is missing required columns: {', '.join(missing)}"
+    return True, "Valid"
+
+
+def text_value(row, column, default=""):
+    value = row.get(column, default)
+    if pd.isna(value):
+        return default
+    return str(value).strip()
+
+
+def import_leads_csv(uploaded_df):
+    required = ["company", "contact_name", "email", "industry", "location", "lead_source", "service_interest", "status", "lead_score"]
+    ok, message = validate_columns(uploaded_df, required, "Leads")
+    if not ok:
+        return 0, 0, message
+
+    imported = skipped = 0
+    now = datetime.now().isoformat(timespec="seconds")
+    for _, r in uploaded_df.iterrows():
+        company = text_value(r, "company")
+        email = text_value(r, "email")
+        if not company:
+            skipped += 1
+            continue
+        exists = run("SELECT id FROM leads WHERE lower(company)=lower(?) AND lower(coalesce(email,''))=lower(?)", (company, email), fetch=True)
+        if exists:
+            skipped += 1
+            continue
+        try:
+            score = int(float(r.get("lead_score", 0)))
+        except (TypeError, ValueError):
+            score = 0
+        run("""INSERT INTO leads(company,contact_name,email,phone,country,service,source,status,score,notes,created_at)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            (company, text_value(r,"contact_name"), email, text_value(r,"phone"),
+             text_value(r,"location", "UK"), text_value(r,"service_interest"),
+             text_value(r,"lead_source"), text_value(r,"status", "New"), score,
+             text_value(r,"notes"), now))
+        imported += 1
+    return imported, skipped, None
+
+
+def find_lead_id(row):
+    company = text_value(row, "company")
+    if company:
+        found = run("SELECT id FROM leads WHERE lower(company)=lower(?) ORDER BY id LIMIT 1", (company,), fetch=True)
+        if found:
+            return found[0]["id"]
+    raw_id = row.get("lead_id")
+    try:
+        if not pd.isna(raw_id):
+            found = run("SELECT id FROM leads WHERE id=?", (int(float(raw_id)),), fetch=True)
+            if found:
+                return found[0]["id"]
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+def import_opportunities_csv(uploaded_df):
+    required = ["lead_id", "company", "opportunity_name", "service", "stage", "estimated_value_gbp", "probability_pct", "expected_close_date"]
+    ok, message = validate_columns(uploaded_df, required, "Opportunities")
+    if not ok:
+        return 0, 0, message
+
+    imported = skipped = 0
+    now = datetime.now().isoformat(timespec="seconds")
+    for _, r in uploaded_df.iterrows():
+        lead_id = find_lead_id(r)
+        title = text_value(r, "opportunity_name")
+        if not lead_id or not title:
+            skipped += 1
+            continue
+        duplicate = run("SELECT id FROM opportunities WHERE lead_id=? AND lower(title)=lower(?)", (lead_id, title), fetch=True)
+        if duplicate:
+            skipped += 1
+            continue
+        try:
+            value = float(r.get("estimated_value_gbp", 0))
+        except (TypeError, ValueError):
+            value = 0.0
+        try:
+            probability = int(float(r.get("probability_pct", 20)))
+        except (TypeError, ValueError):
+            probability = 20
+        stage = text_value(r, "stage", "Discovery")
+        # Normalize the stage name used by the CRM.
+        if stage == "Qualification":
+            stage = "Qualified"
+        run("""INSERT INTO opportunities(lead_id,title,service,value_gbp,stage,probability,expected_close,notes,created_at)
+               VALUES(?,?,?,?,?,?,?,?,?)""",
+            (lead_id, title, text_value(r,"service"), value, stage, probability,
+             text_value(r,"expected_close_date"), text_value(r,"notes"), now))
+        imported += 1
+    return imported, skipped, None
+
+
+def import_activities_csv(uploaded_df):
+    required = ["lead_id", "company", "activity_type", "activity_date", "subject", "outcome", "notes"]
+    ok, message = validate_columns(uploaded_df, required, "Activities")
+    if not ok:
+        return 0, 0, message
+
+    imported = skipped = 0
+    now = datetime.now().isoformat(timespec="seconds")
+    for _, r in uploaded_df.iterrows():
+        lead_id = find_lead_id(r)
+        subject = text_value(r, "subject")
+        due_date = text_value(r, "activity_date")
+        if not subject:
+            skipped += 1
+            continue
+        duplicate = run("SELECT id FROM activities WHERE coalesce(lead_id,0)=coalesce(?,0) AND lower(subject)=lower(?) AND coalesce(due_date,'')=?", (lead_id, subject, due_date), fetch=True)
+        if duplicate:
+            skipped += 1
+            continue
+        outcome = text_value(r, "outcome")
+        notes = text_value(r, "notes")
+        combined_notes = f"Outcome: {outcome}. {notes}" if outcome else notes
+        run("""INSERT INTO activities(lead_id,activity_type,subject,due_date,priority,completed,notes,created_at)
+               VALUES(?,?,?,?,?,?,?,?)""",
+            (lead_id, text_value(r,"activity_type"), subject, due_date, "Medium", 0, combined_notes, now))
+        imported += 1
+    return imported, skipped, None
+
+
+def render_csv_import(label, uploader_key, importer, required_columns):
+    uploaded = st.file_uploader(f"Upload {label} CSV", type=["csv"], key=uploader_key)
+    if uploaded is None:
+        return
+    try:
+        uploaded_df = pd.read_csv(uploaded)
+    except Exception as exc:
+        st.error(f"Could not read the CSV: {exc}")
+        return
+
+    st.caption(f"Detected {len(uploaded_df):,} rows and {len(uploaded_df.columns):,} columns.")
+    missing = [c for c in required_columns if c not in uploaded_df.columns]
+    if missing:
+        st.error(f"Validation failed — missing columns: {', '.join(missing)}")
+        st.code(", ".join(required_columns), language="text")
+        return
+
+    st.success("CSV validation passed.")
+    st.dataframe(uploaded_df.head(10), use_container_width=True, hide_index=True)
+    if st.button(f"Import {len(uploaded_df):,} {label.lower()}", type="primary", key=f"import_{uploader_key}"):
+        imported, skipped, error = importer(uploaded_df)
+        if error:
+            st.error(error)
+        else:
+            st.success(f"Imported {imported:,} rows. Skipped {skipped:,} duplicate/invalid rows.")
+            st.rerun()
+
+
+def data_import_page():
+    st.title("Data Import")
+    st.caption("Upload CSV files, validate them, import them into SQLite, and refresh the CRM dashboard automatically.")
+
+    st.info("Use the supplied Ultimate Outsourcing dummy CSVs. Duplicate leads, opportunities, and activities are skipped automatically.")
+
+    with st.expander("📥 Import Leads", expanded=True):
+        render_csv_import(
+            "Leads", "leads_csv",
+            import_leads_csv,
+            ["company", "contact_name", "email", "industry", "location", "lead_source", "service_interest", "status", "lead_score"]
+        )
+
+    with st.expander("📥 Import Opportunities"):
+        render_csv_import(
+            "Opportunities", "opportunities_csv",
+            import_opportunities_csv,
+            ["lead_id", "company", "opportunity_name", "service", "stage", "estimated_value_gbp", "probability_pct", "expected_close_date"]
+        )
+
+    with st.expander("📥 Import Activities"):
+        render_csv_import(
+            "Activities", "activities_csv",
+            import_activities_csv,
+            ["lead_id", "company", "activity_type", "activity_date", "subject", "outcome", "notes"]
+        )
+
+
 st.sidebar.title("🤝 Ultimate Outsourcing CRM")
 st.sidebar.caption("Business Development • BPO • Recruitment")
-page = st.sidebar.radio("Go to", ["Dashboard", "Leads", "Pipeline", "Activities", "AI Sales Assistant"])
+page = st.sidebar.radio("Go to", ["Dashboard", "Leads", "Pipeline", "Activities", "Data Import", "AI Sales Assistant"])
 st.sidebar.divider()
 st.sidebar.caption("MVP: Streamlit + SQLite + Gemini 2.5 Flash")
 
-if page == "Dashboard":
+if page == "Data Import":
+    data_import_page()
+
+elif page == "Dashboard":
     st.title("Business Development Dashboard")
     st.caption("Track prospects, outsourcing opportunities, follow-ups and AI-assisted sales decisions.")
     leads, opps, acts = crm_context()
