@@ -10,7 +10,7 @@ from google.genai import types
 
 APP_NAME = "Ultimate Outsourcing | Business Development CRM"
 DB_PATH = Path(__file__).with_name("crm.db")
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = "gemini-3.5-flash"
 
 st.set_page_config(page_title="Ultimate Outsourcing CRM", page_icon="🤝", layout="wide")
 
