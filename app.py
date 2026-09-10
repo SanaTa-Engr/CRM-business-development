@@ -10,7 +10,7 @@ from google.genai import types
 
 APP_NAME = "Ultimate Outsourcing | Business Development CRM"
 DB_PATH = Path(__file__).with_name("crm.db")
-GEMINI_MODEL = "gemini-3.5-flash"
+GEMINI_MODEL = "gemini-2.5-flash"
 
 st.set_page_config(page_title="Ultimate Outsourcing CRM", page_icon="🤝", layout="wide")
 
@@ -125,6 +125,90 @@ def crm_context():
                  LEFT JOIN leads l ON l.id=a.lead_id ORDER BY a.completed, a.due_date""")
     return leads, opps, acts
 
+
+
+# -----------------------------------------------------------------------------
+# Dashboard visual helpers
+# -----------------------------------------------------------------------------
+
+def dashboard_styles():
+    st.markdown("""
+    <style>
+    .dash-header { display:flex; align-items:center; gap:14px; margin-bottom:4px; }
+    .dash-header-icon { width:52px; height:52px; border-radius:14px; display:flex; align-items:center; justify-content:center;
+        background:linear-gradient(135deg,#5b4de8,#7c3aed); color:white; font-size:25px; box-shadow:0 8px 22px rgba(91,77,232,.20); }
+    .dash-title { font-size:31px; font-weight:800; line-height:1.05; color:#171923; margin:0; }
+    .dash-subtitle { color:#9aa0ad; font-size:15px; margin-top:5px; }
+    .metric-card { min-height:142px; border:1px solid #edf0f5; border-radius:14px; background:#fff; padding:18px 18px 15px;
+        box-shadow:0 2px 10px rgba(20,25,40,.035); }
+    .metric-icon { width:42px; height:42px; border-radius:11px; display:flex; align-items:center; justify-content:center;
+        color:#fff; font-size:20px; margin-bottom:13px; }
+    .metric-label { color:#8f95a3; font-size:13px; font-weight:600; margin-bottom:2px; }
+    .metric-value { color:#171923; font-size:29px; line-height:1; font-weight:800; }
+    .chart-card { border:1px solid #edf0f5; border-radius:14px; background:#fff; padding:22px 22px 18px; min-height:355px;
+        box-shadow:0 2px 10px rgba(20,25,40,.035); }
+    .chart-title { color:#171923; font-size:18px; font-weight:800; margin-bottom:20px; }
+    .bar-chart { height:245px; display:flex; align-items:flex-end; gap:12px; padding:8px 8px 0; border-bottom:1px solid #e9ecf2; }
+    .bar-item { flex:1; height:100%; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; min-width:0; }
+    .bar-value { font-size:12px; font-weight:700; color:#697080; margin-bottom:6px; }
+    .bar { width:min(48px,75%); min-height:3px; border-radius:6px 6px 0 0; }
+    .bar-label { font-size:10px; color:#7f8694; margin-top:9px; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; width:100%; transform:rotate(-18deg); transform-origin:top center; }
+    .donut-wrap { display:flex; align-items:center; justify-content:center; gap:34px; min-height:275px; }
+    .donut { width:188px; height:188px; border-radius:50%; position:relative; flex:0 0 auto; }
+    .donut::after { content:""; position:absolute; inset:48px; background:#fff; border-radius:50%; }
+    .donut-center { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; z-index:2; font-weight:800; color:#202331; font-size:18px; }
+    .legend { display:flex; flex-direction:column; gap:9px; min-width:180px; max-height:230px; overflow:auto; }
+    .legend-row { display:flex; align-items:center; justify-content:space-between; gap:18px; color:#777e8d; font-size:12px; }
+    .legend-name { display:flex; align-items:center; gap:8px; min-width:0; }
+    .legend-dot { width:10px; height:10px; border-radius:50%; flex:0 0 auto; }
+    .legend-count { font-weight:800; color:#535968; }
+    .empty-chart { height:280px; display:flex; align-items:center; justify-content:center; color:#9aa0ad; font-size:14px; }
+    @media (max-width: 900px) { .donut-wrap { flex-direction:column; gap:12px; } .legend { width:100%; } }
+    </style>
+    """, unsafe_allow_html=True)
+
+
+def metric_card(label, value, icon, bg):
+    return '<div class="metric-card">' \
+        + f'<div class="metric-icon" style="background:{bg};">{icon}</div>' \
+        + f'<div class="metric-label">{label}</div>' \
+        + f'<div class="metric-value">{value}</div></div>'
+
+
+def outreach_chart_html(status_counts):
+    order = ["New", "Contacted", "Qualified", "Proposal", "Negotiation", "Won", "Lost"]
+    colors = ["#9aa8bd", "#3b82f6", "#14b8a6", "#7c3aed", "#8b5cf6", "#f59e0b", "#10b981"]
+    values = [int(status_counts.get(x, 0)) for x in order]
+    max_value = max(values) if values else 1
+    bars = []
+    for label, value, color in zip(order, values, colors):
+        height = 3 if value == 0 else max(8, int((value / max_value) * 205))
+        bars.append('<div class="bar-item"><div class="bar-value">' + str(value) + '</div>'
+                    + f'<div class="bar" style="height:{height}px;background:{color};"></div>'
+                    + f'<div class="bar-label" title="{label}">{label}</div></div>')
+    return '<div class="bar-chart">' + ''.join(bars) + '</div>'
+
+
+def opportunity_donut_html(opps):
+    if opps.empty:
+        return '<div class="empty-chart">No opportunities yet.</div>'
+    series = opps["service"].fillna("Other").replace("", "Other").value_counts()
+    if series.empty:
+        return '<div class="empty-chart">No service data available.</div>'
+    palette = ["#5b4de8", "#22a7d6", "#f59e0b", "#3b82f6", "#ef4444", "#14b8a6", "#8b5cf6", "#10b981", "#ec4899", "#64748b"]
+    total = int(series.sum())
+    start = 0.0
+    stops, legend = [], []
+    for i, (name, count) in enumerate(series.items()):
+        pct = float(count) / total * 100
+        end = start + pct
+        color = palette[i % len(palette)]
+        stops.append(f"{color} {start:.2f}% {end:.2f}%")
+        legend.append('<div class="legend-row"><span class="legend-name"><span class="legend-dot" style="background:'
+                      + color + '"></span>' + str(name) + '</span><span class="legend-count">' + str(int(count)) + '</span></div>')
+        start = end
+    return '<div class="donut-wrap"><div class="donut" style="background:conic-gradient(' + ', '.join(stops) + ');"><div class="donut-center">' + str(total) + '</div></div>' \
+        + '<div class="legend">' + ''.join(legend) + '</div></div>'
 
 db_init(); seed()
 
@@ -324,22 +408,62 @@ if page == "Data Import":
     data_import_page()
 
 elif page == "Dashboard":
-    st.title("Business Development Dashboard")
-    st.caption("Track prospects, outsourcing opportunities, follow-ups and AI-assisted sales decisions.")
+    dashboard_styles()
     leads, opps, acts = crm_context()
-    c1,c2,c3,c4 = st.columns(4)
-    c1.metric("Total Leads", len(leads))
-    c2.metric("Qualified Leads", int((leads.status == "Qualified").sum()) if not leads.empty else 0)
-    c3.metric("Open Opportunities", int((~opps.stage.isin(["Won","Lost"])).sum()) if not opps.empty else 0)
-    c4.metric("Pipeline", f"£{opps.value_gbp.sum():,.0f}" if not opps.empty else "£0")
-    st.subheader("Pipeline by Stage")
-    if opps.empty: st.info("No opportunities yet.")
+
+    # KPI definitions use the live CRM database, so the dashboard changes
+    # automatically whenever records are added or imported.
+    total_leads = len(leads)
+    high_priority = int((pd.to_numeric(leads["score"], errors="coerce").fillna(0) >= 80).sum()) if not leads.empty else 0
+    contacted = int((leads["status"].fillna("").str.lower() == "contacted").sum()) if not leads.empty else 0
+    interested = int(leads["status"].fillna("").str.lower().isin(["qualified", "proposal", "negotiation", "interested"]).sum()) if not leads.empty else 0
+    won_clients = int((leads["status"].fillna("").str.lower() == "won").sum()) if not leads.empty else 0
+
+    # The current schema does not store website information. If a website
+    # column is added later, this KPI automatically uses it.
+    if "website" in leads.columns:
+        no_website = int(leads["website"].fillna("").astype(str).str.strip().eq("").sum())
     else:
-        summary = opps.groupby("stage", as_index=False).agg(Opportunities=("id","count"), Value=("value_gbp","sum"))
-        summary["Value"] = summary["Value"].map(lambda x:f"£{x:,.0f}")
-        st.dataframe(summary, use_container_width=True, hide_index=True)
-    st.subheader("Recent Leads")
-    st.dataframe(leads[["company","contact_name","service","source","status","score"]].head(10), use_container_width=True, hide_index=True)
+        no_website = 0
+
+    st.markdown('''
+        <div class="dash-header">
+            <div class="dash-header-icon">⌘</div>
+            <div><div class="dash-title">Dashboard</div><div class="dash-subtitle">Your CRM command center</div></div>
+        </div>
+    ''', unsafe_allow_html=True)
+    st.write("")
+
+    cards = [
+        ("Total Leads", total_leads, "♧", "#5b4de8"),
+        ("High Priority", high_priority, "♨", "#ef4444"),
+        ("No Website", no_website, "⊕", "#475569"),
+        ("Contacted", contacted, "➤", "#2495e9"),
+        ("Interested", interested, "✦", "#8b32d8"),
+        ("Won Clients", won_clients, "♕", "#10a77a"),
+    ]
+    cols = st.columns(6, gap="medium")
+    for col, (label, value, icon, bg) in zip(cols, cards):
+        with col:
+            st.markdown(metric_card(label, f"{value:,}", icon, bg), unsafe_allow_html=True)
+
+    st.write("")
+    left, right = st.columns([1.05, 1], gap="large")
+
+    with left:
+        status_counts = leads["status"].fillna("New").replace("", "New").value_counts().to_dict() if not leads.empty else {}
+        st.markdown('<div class="chart-card"><div class="chart-title">Outreach Pipeline</div>' + outreach_chart_html(status_counts) + '</div>', unsafe_allow_html=True)
+
+    with right:
+        st.markdown('<div class="chart-card"><div class="chart-title">Opportunity Breakdown</div>' + opportunity_donut_html(opps) + '</div>', unsafe_allow_html=True)
+
+    st.write("")
+    with st.expander("📋 Recent Leads", expanded=False):
+        if leads.empty:
+            st.info("No leads yet. Use Find Lead, Leads, or Data Import to add prospects.")
+        else:
+            recent_cols = [c for c in ["id", "company", "contact_name", "service", "source", "status", "score"] if c in leads.columns]
+            st.dataframe(leads[recent_cols].head(10), use_container_width=True, hide_index=True)
 
 elif page == "Leads":
     st.title("Leads & Prospects")
