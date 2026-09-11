@@ -8,11 +8,11 @@ import streamlit as st
 from google import genai
 from google.genai import types
 
-APP_NAME = "Ultimate Outsourcing | Business Development CRM"
+APP_NAME = "SmartCRM | Business Development CRM"
 DB_PATH = Path(__file__).with_name("crm.db")
 GEMINI_MODEL = "gemini-2.5-flash"
 
-st.set_page_config(page_title="Ultimate Outsourcing CRM", page_icon="🤝", layout="wide")
+st.set_page_config(page_title="SmartCRM", page_icon="🤝", layout="wide")
 
 
 def conn():
