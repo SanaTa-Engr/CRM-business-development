@@ -100,7 +100,7 @@ def ai(prompt):
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=(
-                    "You are the business-development AI assistant for Ultimate Outsourcing, "
+                    "You are the business-development AI assistant, "
                     "a UK-focused BPO and recruitment outsourcing company. Use only the CRM "
                     "data supplied. Never invent client facts. Give practical sales advice."
                 ),
@@ -398,7 +398,7 @@ def data_import_page():
         )
 
 
-st.sidebar.title("🤝 Ultimate Outsourcing CRM")
+st.sidebar.title("🤝 SmartCRM")
 st.sidebar.caption("Business Development • BPO • Recruitment")
 page = st.sidebar.radio("Go to", ["Dashboard", "Leads", "Pipeline", "Activities", "Data Import", "AI Sales Assistant"])
 st.sidebar.divider()
