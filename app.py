@@ -374,7 +374,7 @@ def data_import_page():
     st.title("Data Import")
     st.caption("Upload CSV files, validate them, import them into SQLite, and refresh the CRM dashboard automatically.")
 
-    st.info("Use the supplied Ultimate Outsourcing dummy CSVs. Duplicate leads, opportunities, and activities are skipped automatically.")
+    st.info("Use the supplied dummy CSVs. Duplicate leads, opportunities, and activities are skipped automatically.")
 
     with st.expander("📥 Import Leads", expanded=True):
         render_csv_import(
